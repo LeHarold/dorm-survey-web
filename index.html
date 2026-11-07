@@ -10,6 +10,12 @@
       button{cursor:pointer} button:disabled{opacity:.65;cursor:default} .action{color:white;background:#185643;font-weight:650}
       .room{text-align:left;min-height:5.5rem;background:#f4f7f5;color:inherit;display:flex;flex-direction:column;gap:.25rem;overflow-wrap:anywhere}
       .room[aria-pressed="true"]{outline:3px solid #185643;outline-offset:1px} .room.done{background:#e8f4ec}.room.damage{background:#fff1df;border-color:#a65e26}
+      .filters{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}.filters button{min-height:44px;background:white;color:#18352d}
+      .filters button[aria-pressed="true"]{background:#185643;color:white}
+      .room.match{box-shadow:inset 0 0 0 3px #b58000;background:#fff7cd}.room.dim{opacity:.4}
+      .zone{min-width:0}.rooms{-webkit-overflow-scrolling:touch}button{min-height:44px}
+      dialog::backdrop{background:#18352d66}
+      dialog:not([open]){display:none}dialog[open]{overflow:auto}body{padding-bottom:env(safe-area-inset-bottom)}
       .room strong{font-size:1.15rem}.room span{font-size:.9rem}.room .note{white-space:pre-wrap;max-height:5rem;overflow:auto}
       label{display:grid;gap:.35rem;margin:1rem 0;font-weight:650} textarea{resize:vertical} #selected{white-space:pre-wrap;overflow-wrap:anywhere} #message:empty{display:none}
       .roster-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:1rem;border:0;margin:0;padding:0}
@@ -40,10 +46,17 @@
       </form>
     </details>
     <div class="toolbar"><strong id="summary"></strong><button id="refresh">重新整理回報</button></div>
+    <div id="filters" class="filters" role="group" aria-label="點選統計以點亮符合的寢室">
+      <button type="button" data-filter="">顯示全部</button>
+      <button type="button" data-filter="窗型">窗型</button>
+      <button type="button" data-filter="分離式">分離式</button>
+      <button type="button" data-filter="損壞">有損壞</button>
+    </div>
+    <p id="filter-status" class="hint" role="status"></p>
     <p id="message" role="status"></p>
     <details id="room-layout" hidden>
       <summary>管理寢室配置</summary>
-      <p>可更改區名、新增區域或寢室，也可修改房號及調整位置。原有回報和住戶會隨房間保留。</p>
+      <p>可更改區名、新增區域或寢室，也可修改房號及調整位置。新增區域後可按該區的「新增寢室」，最後按「儲存寢室配置」。</p>
       <form><fieldset class="layout-rows" aria-label="各區寢室位置"></fieldset>
         <button type="submit" class="action">儲存寢室配置</button><p role="status"></p>
       </form>
@@ -74,6 +87,10 @@
       const code = location.hash.slice(1);
       let adminCode = "";
       let layoutVersion;
+      let layoutSignature = "";
+      let layoutRevision = 0;
+      let refreshSequence = 0;
+      let activeFilter = "";
       let labels = new Map();
       let roomGroups = [];
       let areaNames = [];
@@ -81,6 +98,14 @@
       const form = document.querySelector("#room-form");
       const layout = document.querySelector("#layout");
       const summary = document.querySelector("#summary");
+      const filterButtons = [...document.querySelectorAll("#filters button")];
+      const filterStatus = document.querySelector("#filter-status");
+      for (const button of filterButtons) {
+        button.addEventListener("click", () => {
+          activeFilter = activeFilter === button.dataset.filter ? "" : button.dataset.filter;
+          draw();
+        });
+      }
       const message = document.querySelector("#message");
       const formMessage = document.querySelector("#form-message");
       const refresh = document.querySelector("#refresh");
@@ -110,7 +135,15 @@
         return element;
       }
       function setLayout(configuration) {
-        if (layoutVersion === configuration.version) return;
+        const signature = JSON.stringify([configuration.names, configuration.groups]);
+        if (layoutSignature === signature) {
+          const changed = layoutVersion !== configuration.version;
+          if (changed) layoutRevision++;
+          layoutVersion = configuration.version;
+          return changed;
+        }
+        layoutSignature = signature;
+        layoutRevision++;
         layoutVersion = configuration.version;
         roomGroups = configuration.groups;
         areaNames = configuration.names;
@@ -125,7 +158,8 @@
           line(zone, "h2", name + "｜" + rooms.length + " 間");
           const grid = document.createElement("div");
           grid.className = "rooms";
-          grid.style.gridTemplateColumns = "repeat(" + rooms.length + ", minmax(5.75rem, 1fr))";
+          grid.style.gridTemplateColumns = "repeat(" + Math.max(rooms.length, 1) + ", minmax(5.75rem, 1fr))";
+          if (!rooms.length) line(grid, "p", "此區尚未新增寢室。", "hint");
           rooms.forEach(id => {
             const button = document.createElement("button");
             button.type = "button";
@@ -137,9 +171,10 @@
           layout.append(zone);
         });
         if (room) roomTitle.textContent = labels.get(room) + "｜填寫回報";
+        return true;
       }
       function draw() {
-        let filled = 0, damaged = 0, windowUnits = 0, splitUnits = 0;
+        let filled = 0, damaged = 0, windowUnits = 0, splitUnits = 0, matches = 0;
         for (const [id, button] of cards) {
           const record = records.get(id);
           const hasDamage = record && roomStatus(record) === "有";
@@ -148,6 +183,11 @@
           windowUnits += record?.type === "窗型";
           splitUnits += record?.type === "分離式";
           button.className = "room" + (record ? hasDamage ? " damage" : " done" : "");
+          const match = activeFilter === "損壞" ? hasDamage : record?.type === activeFilter;
+          if (activeFilter) {
+            button.classList.add(match ? "match" : "dim");
+            if (match) matches++;
+          }
           button.disabled = !ready || submit.disabled;
           button.setAttribute("aria-pressed", String(id === room));
           button.replaceChildren();
@@ -158,7 +198,15 @@
           if (record?.details) line(button, "span", record.details, "note");
           if (record?.repair) line(button, "span", "維修｜" + record.repair.status);
         }
-        summary.textContent = ready ? "已填 " + filled + "/" + cards.size + "　窗型 " + windowUnits + "　分離式 " + splitUnits + "　有損壞 " + damaged : "三區房間配置";
+        summary.textContent = ready ? areaNames.length + " 區｜已填 " + filled + "/" + cards.size : "載入寢室配置中…";
+        const totals = {"":cards.size, "窗型":windowUnits, "分離式":splitUnits, "損壞":damaged};
+        for (const button of filterButtons) {
+          const value = button.dataset.filter;
+          button.textContent = (value === "損壞" ? "有損壞" : value || "顯示全部") + " " + totals[value];
+          button.disabled = !ready;
+          button.setAttribute("aria-pressed", String(value === activeFilter));
+        }
+        filterStatus.textContent = activeFilter ? "已點亮 " + matches + " 間" + (activeFilter === "損壞" ? "有損壞的寢室" : "使用" + activeFilter + "冷氣的寢室") + "。再次點選可取消。" : "";
         const older = [...records.values()].filter(record => !cards.has(record.room));
         const list = legacy.querySelector("ul");
         list.replaceChildren();
@@ -230,15 +278,22 @@
           activityStatus.textContent = error.message;
           readActivity.hidden = true;
         }
-        if (!activity.open) activity.showModal();
+        if (!activity.open) {
+          if (typeof activity.showModal === "function") activity.showModal();
+          else activity.setAttribute("open", "");
+        }
+      }
+      function closeActivity() {
+        if (typeof activity.close === "function") activity.close();
+        else activity.removeAttribute("open");
       }
       document.querySelector("#activity-button").onclick = () => showActivity(true);
-      document.querySelector("#close-activity").onclick = () => activity.close();
+      document.querySelector("#close-activity").onclick = closeActivity;
       readActivity.onclick = async () => {
         readActivity.disabled = true;
         try {
           await api("/api/activity", {method:"POST",body:JSON.stringify(activityThrough)}, adminCode);
-          activity.close();
+          closeActivity();
         } catch (error) { activityStatus.textContent = error.message; }
         finally { readActivity.disabled = false; }
       };
@@ -259,13 +314,18 @@
         } finally { button.disabled = false; }
       });
       async function unlockAdmin(credential) {
-        const [values, shared] = await Promise.all([
+        const [values, shared, rows] = await Promise.all([
           api("/api/roster", undefined, credential),
-          api("/api/community", undefined, credential)
+          api("/api/community", undefined, credential),
+          api("/api/rooms", undefined, credential)
         ]);
         adminCode = credential;
         try { sessionStorage.setItem("dorm-admin", credential); } catch {}
         setLayout(shared.configuration);
+        occupants = shared.occupants;
+        records = new Map(rows.map(record => [record.room, record]));
+        ready = true;
+        submit.disabled = false;
         enableRoster(values);
         editLayout(shared.configuration);
         draw();
@@ -416,6 +476,7 @@
         for (const [index, entries] of roomGroups.entries()) {
           const group = line(editor.firstElementChild, "section", "");
           line(group, "h3", areaNames[index]);
+          if (!entries.length) line(group, "p", "此區尚未新增寢室，請先在「管理寢室配置」新增。", "hint");
           for (const {id} of entries) {
             const label = line(group, "label", labels.get(id));
             const input = document.createElement("input");
@@ -443,12 +504,19 @@
       }
 
       async function load() {
+        const sequence = ++refreshSequence;
+        const revision = layoutRevision;
         refresh.disabled = true;
         submit.disabled = true;
         try {
           const [rows, shared] = await Promise.all([api("/api/rooms"), api("/api/community")]);
-          setLayout(shared.configuration);
+          if (sequence !== refreshSequence || revision !== layoutRevision) return;
+          const changed = setLayout(shared.configuration);
           occupants = shared.occupants;
+          if (adminCode && changed) {
+            enableRoster(occupants);
+            editLayout(shared.configuration);
+          }
           showNotice(shared.notice);
           records = new Map(rows.map(record => [record.room, record]));
           ready = true;
@@ -456,7 +524,7 @@
         } catch (error) { message.textContent = error.message; }
         finally {
           submit.disabled = !ready;
-          refresh.disabled = false;
+          if (sequence === refreshSequence) refresh.disabled = false;
           draw();
         }
       }
