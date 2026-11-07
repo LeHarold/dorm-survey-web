@@ -19,7 +19,7 @@
       .layout-row label{margin:0;flex:1 1 8rem}.layout-rows section{margin-bottom:1rem}
       .eyebrow{color:#28604e;font-weight:700;letter-spacing:.08em}
     </style>
-    <main><header><div class="eyebrow">宿舍｜寢室配置與回報</div><h1>宿舍設備與損壞調查</h1><p>點選你所在的房間即可填報。持有本連結的人可查看住戶稱呼、公告和回報內容。</p></header>
+    <main><header><div class="eyebrow">宿舍｜寢室配置與回報</div><h1>宿舍設備與損壞調查</h1><p>點選你所在的房間即可填報。</p></header>
     <section class="zone" aria-labelledby="board-title">
       <h2 id="board-title">宿舍布告欄</h2><p id="notice" class="note">載入公告中…</p>
       <form id="notice-editor" hidden>
@@ -27,7 +27,11 @@
         <button class="action" type="submit">發布公告</button><p role="status"></p>
       </form>
     </section>
-    <div id="admin-bar" class="toolbar" hidden><strong>管理模式</strong><button id="logout" type="button">登出管理員</button></div>
+    <div id="admin-bar" class="toolbar" hidden><strong>管理模式</strong><button id="activity-button" type="button">查看異動通知</button><button id="logout" type="button">登出管理員</button></div>
+    <dialog id="activity" aria-labelledby="activity-title" style="max-width:min(32rem,90vw);max-height:80vh;border:1px solid #779588;border-radius:1rem;color:inherit">
+      <h2 id="activity-title">寢室異動通知</h2><ul></ul><p role="status"></p>
+      <div class="toolbar"><button id="close-activity" type="button">關閉</button><button id="read-activity" class="action" type="button">標為已讀</button></div>
+    </dialog>
     <details id="unlock">
       <summary>管理員入口</summary>
       <form id="unlock-form">
@@ -59,6 +63,12 @@
       <label id="details" hidden>損壞位置與情形（選填）<textarea name="details" rows="3" maxlength="500"></textarea></label>
       <button class="action" type="submit">儲存這間房的回報</button><p id="form-message" role="status"></p>
     </form>
+    <form id="repair-form" hidden>
+      <h2>管理員維修回覆</h2>
+      <label>處理狀態<select name="status"><option>待處理</option><option>處理中</option><option>已修復</option></select></label>
+      <label>處理說明（選填）<textarea name="note" rows="3" maxlength="500"></textarea></label>
+      <button class="action" type="submit">發布維修回覆</button><p role="status"></p>
+    </form>
     <details id="legacy" hidden><summary>舊表單的其他房號</summary><ul></ul></details></main>
     <script>
       const code = location.hash.slice(1);
@@ -78,6 +88,13 @@
       const fields = form.elements;
       const roomTitle = document.querySelector("#room-title");
       const selected = document.querySelector("#selected");
+      const repairForm = document.querySelector("#repair-form");
+      const repairStatus = repairForm.querySelector("[role=status]");
+      let repairRecord;
+      const activity = document.querySelector("#activity");
+      const activityStatus = activity.querySelector("[role=status]");
+      const readActivity = document.querySelector("#read-activity");
+      let activityThrough = 0;
       const legacy = document.querySelector("#legacy");
       const cards = new Map();
       let records = new Map();
@@ -139,6 +156,7 @@
           line(button, "span", record ? "已填｜" + (record.reporter || "舊回報") : ready ? "未填" : "尚未載入");
           if (record) line(button, "span", report(record));
           if (record?.details) line(button, "span", record.details, "note");
+          if (record?.repair) line(button, "span", "維修｜" + record.repair.status);
         }
         summary.textContent = ready ? "已填 " + filled + "/" + cards.size + "　窗型 " + windowUnits + "　分離式 " + splitUnits + "　有損壞 " + damaged : "三區房間配置";
         const older = [...records.values()].filter(record => !cards.has(record.room));
@@ -151,6 +169,16 @@
           const current = record ? "目前回報：" + (record.reporter || "舊回報") + "｜" + report(record) +
             (record.details ? "｜" + record.details : "") + "\n再次送出會更新這間房的回報。" : "這間房尚未有人填報。";
           selected.textContent = (occupants[room] ? "住戶：" + occupants[room] + "\n" : "") + current;
+          if (record?.repair) {
+            selected.textContent += "\n管理員回覆：" + record.repair.status + (record.repair.note ? "｜" + record.repair.note : "");
+          }
+          repairForm.hidden = !adminCode || !record || roomStatus(record) !== "有";
+          if (repairRecord?.room !== record?.room || repairRecord?.updated !== record?.updated) {
+            repairRecord = record;
+            repairForm.elements.namedItem("status").value = record?.repair?.status || "待處理";
+            repairForm.elements.namedItem("note").value = record?.repair?.note || "";
+            repairStatus.textContent = "";
+          }
         }
       }
       function showDetails() {
@@ -184,6 +212,52 @@
       function showNotice(value) {
         document.querySelector("#notice").textContent = value || "目前沒有公告。";
       }
+      async function showActivity(always = false) {
+        try {
+          const result = await api("/api/activity", undefined, adminCode);
+          if (!always && !result.changes.length) return;
+          activityThrough = result.through;
+          const list = activity.querySelector("ul");
+          list.replaceChildren();
+          const dates = new Intl.DateTimeFormat("zh-TW", {dateStyle:"short",timeStyle:"short"});
+          for (const change of result.changes) {
+            line(list, "li", (labels.get(change.room) || change.room) + "｜" + change.kind + "・" + dates.format(new Date(change.at)));
+          }
+          activityStatus.textContent = result.changes.length ? "" : "目前沒有未讀異動。";
+          readActivity.hidden = !result.changes.length;
+        } catch (error) {
+          activity.querySelector("ul").replaceChildren();
+          activityStatus.textContent = error.message;
+          readActivity.hidden = true;
+        }
+        if (!activity.open) activity.showModal();
+      }
+      document.querySelector("#activity-button").onclick = () => showActivity(true);
+      document.querySelector("#close-activity").onclick = () => activity.close();
+      readActivity.onclick = async () => {
+        readActivity.disabled = true;
+        try {
+          await api("/api/activity", {method:"POST",body:JSON.stringify(activityThrough)}, adminCode);
+          activity.close();
+        } catch (error) { activityStatus.textContent = error.message; }
+        finally { readActivity.disabled = false; }
+      };
+      repairForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        const record = records.get(room);
+        const button = repairForm.querySelector("button");
+        const body = JSON.stringify({...Object.fromEntries(new FormData(repairForm)), room, reportUpdated:record.updated || ""});
+        button.disabled = true;
+        repairStatus.textContent = "發布中…";
+        try {
+          const repair = await api("/api/repair", {method:"POST",body}, adminCode);
+          if (records.get(record.room) === record) record.repair = repair;
+          draw();
+          if (room === record.room) repairStatus.textContent = "維修回覆已發布。";
+        } catch (error) {
+          if (room === record.room) repairStatus.textContent = error.message;
+        } finally { button.disabled = false; }
+      });
       async function unlockAdmin(credential) {
         const [values, shared] = await Promise.all([
           api("/api/roster", undefined, credential),
@@ -199,6 +273,7 @@
         noticeEditor.hidden = false;
         unlock.hidden = true;
         document.querySelector("#admin-bar").hidden = false;
+        await showActivity();
       }
       document.querySelector("#logout").addEventListener("click", () => {
         adminCode = "";
