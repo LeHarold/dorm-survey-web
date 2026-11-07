@@ -1,0 +1,419 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://dorm-survey.trihpii11.workers.dev; form-action 'none'; base-uri 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><title>宿舍設備與損壞調查</title>
+    <style>
+      *{box-sizing:border-box} [hidden]{display:none!important} body{margin:0;background:#eef3ef;color:#18352d;font:16px/1.55 system-ui,sans-serif}
+      main{max-width:68rem;margin:auto;padding:clamp(1rem,4vw,3rem)}
+      h1,h2{line-height:1.2} h1{font-size:clamp(1.7rem,5vw,2.6rem);margin:.4rem 0} h2{margin:.5rem 0}
+      header p,.hint{color:#476356} .toolbar{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap;margin:1rem 0}
+      .zone,form,details{background:white;border:1px solid #cdded4;border-radius:1rem;padding:1rem;margin:1rem 0}
+      .rooms{display:grid;grid-template-columns:repeat(6,minmax(5.75rem,1fr));gap:.55rem;margin-top:.8rem;overflow-x:auto;padding:.3rem}
+      input,select,textarea,button{font:inherit;padding:.55rem .7rem;border:1px solid #779588;border-radius:.55rem} input,select,textarea{width:100%;color:inherit;background:white}
+      button{cursor:pointer} button:disabled{opacity:.65;cursor:default} .action{color:white;background:#185643;font-weight:650}
+      .room{text-align:left;min-height:5.5rem;background:#f4f7f5;color:inherit;display:flex;flex-direction:column;gap:.25rem;overflow-wrap:anywhere}
+      .room[aria-pressed="true"]{outline:3px solid #185643;outline-offset:1px} .room.done{background:#e8f4ec}.room.damage{background:#fff1df;border-color:#a65e26}
+      .room strong{font-size:1.15rem}.room span{font-size:.9rem}.room .note{white-space:pre-wrap;max-height:5rem;overflow:auto}
+      label{display:grid;gap:.35rem;margin:1rem 0;font-weight:650} textarea{resize:vertical} #selected{white-space:pre-wrap;overflow-wrap:anywhere} #message:empty{display:none}
+      .roster-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:1rem;border:0;margin:0;padding:0}
+      .roster-grid section{min-width:0} .roster-grid h3{margin:.5rem 0} .roster-grid label{margin:.55rem 0}
+      #notice{white-space:pre-wrap;overflow-wrap:anywhere} #notice-editor{margin-bottom:0}
+      .layout-rows{border:0;padding:0;margin:0;min-width:0}.layout-row{display:flex;gap:.5rem;align-items:end;flex-wrap:wrap;margin:.75rem 0}
+      .layout-row label{margin:0;flex:1 1 8rem}.layout-rows section{margin-bottom:1rem}
+      .eyebrow{color:#28604e;font-weight:700;letter-spacing:.08em}
+    </style>
+    <main><header><div class="eyebrow">宿舍｜寢室配置與回報</div><h1>宿舍設備與損壞調查</h1><p>點選你所在的房間即可填報。持有本連結的人可查看住戶稱呼、公告和回報內容。</p></header>
+    <section class="zone" aria-labelledby="board-title">
+      <h2 id="board-title">宿舍布告欄</h2><p id="notice" class="note">載入公告中…</p>
+      <form id="notice-editor" hidden>
+        <label>編輯最新公告<textarea name="notice" rows="4" maxlength="2000" placeholder="輸入要分享的最新消息"></textarea></label>
+        <button class="action" type="submit">發布公告</button><p role="status"></p>
+      </form>
+    </section>
+    <div id="admin-bar" class="toolbar" hidden><strong>管理模式</strong><button id="logout" type="button">登出管理員</button></div>
+    <details id="unlock">
+      <summary>管理員入口</summary>
+      <form id="unlock-form">
+        <label>管理密碼<input type="password" name="credential" required autocomplete="current-password" inputmode="numeric" maxlength="64"></label>
+        <button type="submit">解鎖管理</button><p role="status"></p>
+      </form>
+    </details>
+    <div class="toolbar"><strong id="summary"></strong><button id="refresh">重新整理回報</button></div>
+    <p id="message" role="status"></p>
+    <details id="room-layout" hidden>
+      <summary>管理寢室配置</summary>
+      <p>可更改區名、新增區域或寢室，也可修改房號及調整位置。原有回報和住戶會隨房間保留。</p>
+      <form><fieldset class="layout-rows" aria-label="各區寢室位置"></fieldset>
+        <button type="submit" class="action">儲存寢室配置</button><p role="status"></p>
+      </form>
+    </details>
+    <details id="occupants" hidden>
+      <summary>管理住宿名單</summary>
+      <p>可以先填各房的住戶姓名或稱呼，多人用頓號隔開。留空會清除該房住戶。</p>
+      <form><fieldset class="roster-grid" aria-label="各寢室住戶"></fieldset>
+        <button type="submit" class="action">儲存住宿名單</button><p role="status"></p>
+      </form>
+    </details>
+    <div id="layout"></div>
+    <form id="room-form" hidden><h2 tabindex="-1" id="room-title"></h2><p id="selected" class="hint"></p>
+      <label>填報人<input name="reporter" required maxlength="40" placeholder="輸入你的姓名或宿舍慣用稱呼"></label>
+      <label>正在使用的冷氣<select name="type" required><option value="">請選擇</option><option>窗型</option><option>分離式</option></select></label>
+      <label>有沒有損壞？<select name="status" required><option value="">請選擇</option><option>有</option><option>無</option></select></label>
+      <label id="details" hidden>損壞位置與情形（選填）<textarea name="details" rows="3" maxlength="500"></textarea></label>
+      <button class="action" type="submit">儲存這間房的回報</button><p id="form-message" role="status"></p>
+    </form>
+    <details id="legacy" hidden><summary>舊表單的其他房號</summary><ul></ul></details></main>
+    <script>
+      const code = location.hash.slice(1);
+      let adminCode = "";
+      let layoutVersion;
+      let labels = new Map();
+      let roomGroups = [];
+      let areaNames = [];
+      let occupants = {};
+      const form = document.querySelector("#room-form");
+      const layout = document.querySelector("#layout");
+      const summary = document.querySelector("#summary");
+      const message = document.querySelector("#message");
+      const formMessage = document.querySelector("#form-message");
+      const refresh = document.querySelector("#refresh");
+      const submit = form.querySelector("button");
+      const fields = form.elements;
+      const roomTitle = document.querySelector("#room-title");
+      const selected = document.querySelector("#selected");
+      const legacy = document.querySelector("#legacy");
+      const cards = new Map();
+      let records = new Map();
+      let ready = false;
+      let room = "";
+      const roomStatus = record => record.status === "有損壞" ? "有" : record.status === "無損壞" ? "無" : record.status;
+      const report = record => record.type + "・" + (roomStatus(record) === "有" ? "有損壞" : roomStatus(record) === "無" ? "無損壞" : record.status);
+      function line(parent, tag, value, className) {
+        const element = document.createElement(tag);
+        element.textContent = value;
+        if (className) element.className = className;
+        parent.append(element);
+        return element;
+      }
+      function setLayout(configuration) {
+        if (layoutVersion === configuration.version) return;
+        layoutVersion = configuration.version;
+        roomGroups = configuration.groups;
+        areaNames = configuration.names;
+        labels = new Map(configuration.groups.flat().map(entry => [entry.id, entry.label]));
+        cards.clear();
+        layout.replaceChildren();
+        configuration.groups.forEach((group, index) => {
+          const name = areaNames[index];
+          const rooms = group.map(entry => entry.id);
+          const zone = document.createElement("section");
+          zone.className = "zone";
+          line(zone, "h2", name + "｜" + rooms.length + " 間");
+          const grid = document.createElement("div");
+          grid.className = "rooms";
+          grid.style.gridTemplateColumns = "repeat(" + rooms.length + ", minmax(5.75rem, 1fr))";
+          rooms.forEach(id => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.addEventListener("click", () => selectRoom(id));
+            cards.set(id, button);
+            grid.append(button);
+          });
+          zone.append(grid);
+          layout.append(zone);
+        });
+        if (room) roomTitle.textContent = labels.get(room) + "｜填寫回報";
+      }
+      function draw() {
+        let filled = 0, damaged = 0, windowUnits = 0, splitUnits = 0;
+        for (const [id, button] of cards) {
+          const record = records.get(id);
+          const hasDamage = record && roomStatus(record) === "有";
+          filled += Boolean(record);
+          damaged += Boolean(hasDamage);
+          windowUnits += record?.type === "窗型";
+          splitUnits += record?.type === "分離式";
+          button.className = "room" + (record ? hasDamage ? " damage" : " done" : "");
+          button.disabled = !ready || submit.disabled;
+          button.setAttribute("aria-pressed", String(id === room));
+          button.replaceChildren();
+          line(button, "strong", labels.get(id));
+          if (occupants[id]) line(button, "span", "住戶｜" + occupants[id]);
+          line(button, "span", record ? "已填｜" + (record.reporter || "舊回報") : ready ? "未填" : "尚未載入");
+          if (record) line(button, "span", report(record));
+          if (record?.details) line(button, "span", record.details, "note");
+        }
+        summary.textContent = ready ? "已填 " + filled + "/" + cards.size + "　窗型 " + windowUnits + "　分離式 " + splitUnits + "　有損壞 " + damaged : "三區房間配置";
+        const older = [...records.values()].filter(record => !cards.has(record.room));
+        const list = legacy.querySelector("ul");
+        list.replaceChildren();
+        for (const record of older) line(list, "li", record.room + "｜" + report(record) + (record.details ? "｜" + record.details : ""));
+        legacy.hidden = !older.length;
+        if (room) {
+          const record = records.get(room);
+          const current = record ? "目前回報：" + (record.reporter || "舊回報") + "｜" + report(record) +
+            (record.details ? "｜" + record.details : "") + "\n再次送出會更新這間房的回報。" : "這間房尚未有人填報。";
+          selected.textContent = (occupants[room] ? "住戶：" + occupants[room] + "\n" : "") + current;
+        }
+      }
+      function showDetails() {
+        document.querySelector("#details").hidden = fields.status.value !== "有";
+      }
+      function selectRoom(id) {
+        room = id;
+        const record = records.get(id);
+        form.hidden = false;
+        roomTitle.textContent = labels.get(id) + "｜填寫回報";
+        fields.reporter.value = "";
+        fields.type.value = record?.type || "";
+        fields.status.value = record ? roomStatus(record) : "";
+        fields.details.value = record?.details || "";
+        formMessage.textContent = "";
+        showDetails();
+        draw();
+        roomTitle.focus();
+      }
+      async function api(path, options, credential = code) {
+        const headers = {"Authorization":"Bearer " + credential, "Content-Type":"application/json"};
+        const response = await fetch("https://dorm-survey.trihpii11.workers.dev" + path, {...options, headers});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error);
+        return data;
+      }
+      const unlock = document.querySelector("#unlock");
+      const unlockForm = document.querySelector("#unlock-form");
+      const noticeEditor = document.querySelector("#notice-editor");
+      const noticeField = noticeEditor.elements.namedItem("notice");
+      function showNotice(value) {
+        document.querySelector("#notice").textContent = value || "目前沒有公告。";
+      }
+      async function unlockAdmin(credential) {
+        const [values, shared] = await Promise.all([
+          api("/api/roster", undefined, credential),
+          api("/api/community", undefined, credential)
+        ]);
+        adminCode = credential;
+        try { sessionStorage.setItem("dorm-admin", credential); } catch {}
+        setLayout(shared.configuration);
+        enableRoster(values);
+        editLayout(shared.configuration);
+        draw();
+        noticeField.value = shared.notice;
+        noticeEditor.hidden = false;
+        unlock.hidden = true;
+        document.querySelector("#admin-bar").hidden = false;
+      }
+      document.querySelector("#logout").addEventListener("click", () => {
+        adminCode = "";
+        try { sessionStorage.removeItem("dorm-admin"); } catch {}
+        location.reload();
+      });
+      unlockForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        const input = unlockForm.elements.namedItem("credential");
+        const button = unlockForm.querySelector("button");
+        const status = unlockForm.querySelector("[role=status]");
+        const password = input.value.trim();
+        button.disabled = true;
+        try {
+          const {token} = await api("/api/login", {method:"POST",body:JSON.stringify(password)});
+          await unlockAdmin(token);
+          input.value = "";
+        } catch (error) { status.textContent = error.message; }
+        finally { button.disabled = false; }
+      });
+      noticeEditor.addEventListener("submit", async event => {
+        event.preventDefault();
+        const button = noticeEditor.querySelector("button");
+        const status = noticeEditor.querySelector("[role=status]");
+        const body = JSON.stringify(noticeField.value);
+        button.disabled = true;
+        noticeField.disabled = true;
+        try {
+          const value = await api("/api/community", {method:"POST",body}, adminCode);
+          showNotice(value);
+          status.textContent = "公告已更新。";
+        } catch (error) { status.textContent = error.message; }
+        finally { button.disabled = false; noticeField.disabled = false; }
+      });
+
+      function editLayout(configuration) {
+        const panel = document.querySelector("#room-layout");
+        const editor = panel.querySelector("form");
+        const rows = editor.querySelector(".layout-rows");
+        const status = editor.querySelector("[role=status]");
+        const submitLayout = editor.querySelector("[type=submit]");
+        const names = [...configuration.names];
+        const groups = configuration.groups.map(group => group.map(entry => ({...entry})));
+        function render() {
+          rows.replaceChildren();
+          groups.forEach((group, zone) => {
+            const section = line(rows, "section", "");
+            const nameLabel = line(section, "label", "區名");
+            const nameInput = document.createElement("input");
+            nameInput.value = names[zone];
+            nameInput.required = true;
+            nameInput.maxLength = 24;
+            nameInput.oninput = () => {
+              names[zone] = nameInput.value;
+              for (const picker of rows.querySelectorAll(".area-picker")) {
+                picker.options[zone].text = names[zone] || "新區域 " + (zone + 1);
+              }
+            };
+            nameLabel.append(nameInput);
+            group.forEach((entry, index) => {
+              const row = line(section, "div", "", "layout-row");
+              const label = line(row, "label", "房號");
+              const input = document.createElement("input");
+              input.value = entry.label;
+              input.required = true;
+              input.maxLength = 24;
+              input.oninput = () => { entry.label = input.value; };
+              label.append(input);
+              const position = line(row, "label", "所在區域");
+              const area = document.createElement("select");
+              area.className = "area-picker";
+              names.forEach((name, value) => area.add(new Option(name || "新區域 " + (value + 1), value)));
+              area.value = zone;
+              area.onchange = () => {
+                group.splice(index, 1);
+                groups[Number(area.value)].push(entry);
+                render();
+              };
+              position.append(area);
+              if (!entry.id) {
+                const cancel = line(row, "button", "取消新增");
+                cancel.type = "button";
+                cancel.onclick = () => { group.splice(index, 1); render(); };
+              }
+              for (const [offset, text] of [[-1,"往前"],[1,"往後"]]) {
+                const move = line(row, "button", text);
+                move.type = "button";
+                move.disabled = !group[index + offset];
+                move.onclick = () => {
+                  group.splice(index, 1);
+                  group.splice(index + offset, 0, entry);
+                  render();
+                };
+              }
+            });
+            const add = line(section, "button", "新增寢室");
+            add.type = "button";
+            add.onclick = () => {
+              group.push({id:"",label:""});
+              render();
+              rows.children[zone].querySelector(".layout-row:last-of-type input").focus();
+            };
+          });
+          const addArea = line(rows, "button", "新增區域");
+          addArea.type = "button";
+          addArea.disabled = names.length >= 24;
+          addArea.onclick = () => {
+            names.push("");
+            groups.push([]);
+            render();
+            rows.children[names.length - 1].querySelector("input").focus();
+          };
+        }
+        render();
+        panel.hidden = false;
+        editor.onsubmit = async event => {
+          event.preventDefault();
+          const body = JSON.stringify({version:configuration.version,names,groups});
+          submitLayout.disabled = true;
+          rows.disabled = true;
+          try {
+            const saved = await api("/api/layout", {method:"POST",body}, adminCode);
+            setLayout(saved);
+            enableRoster(occupants);
+            editLayout(saved);
+            draw();
+            status.textContent = "寢室配置已儲存。";
+          } catch (error) { status.textContent = error.message; }
+          finally { submitLayout.disabled = false; rows.disabled = false; }
+        };
+      }
+
+      function enableRoster(values) {
+        const panel = document.querySelector("#occupants");
+        const editor = panel.querySelector("form");
+        const button = editor.querySelector("button");
+        const status = editor.querySelector("[role=status]");
+        const pending = new FormData(editor);
+        editor.firstElementChild.replaceChildren();
+        for (const [index, entries] of roomGroups.entries()) {
+          const group = line(editor.firstElementChild, "section", "");
+          line(group, "h3", areaNames[index]);
+          for (const {id} of entries) {
+            const label = line(group, "label", labels.get(id));
+            const input = document.createElement("input");
+            input.name = id;
+            input.maxLength = 160;
+            input.placeholder = "例如：小陳、小林";
+            input.value = pending.get(id) ?? values[id] ?? "";
+            label.append(input);
+          }
+        }
+        panel.hidden = false;
+        editor.onsubmit = async event => {
+          event.preventDefault();
+          const body = JSON.stringify(Object.fromEntries(new FormData(editor)));
+          button.disabled = true;
+          editor.firstElementChild.disabled = true;
+          status.textContent = "儲存中…";
+          try {
+            occupants = await api("/api/roster", {method:"POST",body}, adminCode);
+            draw();
+            status.textContent = "住宿名單已儲存。";
+          } catch (error) { status.textContent = error.message; }
+          finally { button.disabled = false; editor.firstElementChild.disabled = false; }
+        };
+      }
+
+      async function load() {
+        refresh.disabled = true;
+        submit.disabled = true;
+        try {
+          const [rows, shared] = await Promise.all([api("/api/rooms"), api("/api/community")]);
+          setLayout(shared.configuration);
+          occupants = shared.occupants;
+          showNotice(shared.notice);
+          records = new Map(rows.map(record => [record.room, record]));
+          ready = true;
+          message.textContent = "";
+        } catch (error) { message.textContent = error.message; }
+        finally {
+          submit.disabled = !ready;
+          refresh.disabled = false;
+          draw();
+        }
+      }
+      fields.status.addEventListener("change", showDetails);
+      refresh.addEventListener("click", load);
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        const body = JSON.stringify({...Object.fromEntries(new FormData(form)), room});
+        submit.disabled = true;
+        refresh.disabled = true;
+        formMessage.textContent = "儲存中…";
+        draw();
+        try {
+          const saved = await api("/api/submit", {method:"POST", body});
+          records.set(saved.room, saved);
+          formMessage.textContent = labels.get(saved.room) + " 的回報已儲存。";
+        } catch (error) { formMessage.textContent = error.message; }
+        finally {
+          submit.disabled = false;
+          refresh.disabled = false;
+          draw();
+        }
+      });
+      draw();
+      if (code) {
+        load();
+        let remembered = "";
+        try { remembered = sessionStorage.getItem("dorm-admin") || ""; } catch {}
+        const credential = remembered;
+        if (credential) unlockAdmin(credential).catch(() => {
+          try { sessionStorage.removeItem("dorm-admin"); } catch {}
+        });
+      }
+      else { refresh.disabled = true; showNotice(""); message.textContent = "請使用群組裡的完整填報連結。"; }
+    </script></html>
