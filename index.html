@@ -70,12 +70,17 @@
     </details>
     <div id="layout"></div>
     <form id="room-form" hidden><h2 tabindex="-1" id="room-title"></h2><p id="selected" class="hint"></p>
-      <label>填報人<input name="reporter" required maxlength="40" placeholder="輸入你的姓名或宿舍慣用稱呼"></label>
+      <label>填報人<input name="reporter" required maxlength="40" placeholder="輸入你的姓名"></label>
       <label>正在使用的冷氣<select name="type" required><option value="">請選擇</option><option>窗型</option><option>分離式</option></select></label>
       <label>有沒有損壞？<select name="status" required><option value="">請選擇</option><option>有</option><option>無</option></select></label>
       <label id="details" hidden>損壞位置與情形（選填）<textarea name="details" rows="3" maxlength="500"></textarea></label>
       <button class="action" type="submit">儲存這間房的回報</button><p id="form-message" role="status"></p>
     </form>
+    <section id="history" class="zone" hidden aria-labelledby="history-title">
+      <h2 id="history-title">歷次填報紀錄</h2>
+      <p class="hint">時間以臺灣時間顯示，最新紀錄在上方。</p>
+      <ol></ol><p role="status"></p><button type="button" hidden>載入更早紀錄</button>
+    </section>
     <form id="repair-form" hidden>
       <h2>管理員維修回覆</h2>
       <label>處理狀態<select name="status"><option>待處理</option><option>處理中</option><option>已修復</option></select></label>
@@ -100,6 +105,13 @@
       const summary = document.querySelector("#summary");
       const filterButtons = [...document.querySelectorAll("#filters button")];
       const filterStatus = document.querySelector("#filter-status");
+      const historyPanel = document.querySelector("#history");
+      const historyList = historyPanel.querySelector("ol");
+      const historyStatus = historyPanel.querySelector("[role=status]");
+      const historyMore = historyPanel.querySelector("button");
+      let historyCursor = "";
+      let historyRequest = 0;
+      let historyCount = 0;
       for (const button of filterButtons) {
         button.addEventListener("click", () => {
           activeFilter = activeFilter === button.dataset.filter ? "" : button.dataset.filter;
@@ -193,7 +205,7 @@
           button.replaceChildren();
           line(button, "strong", labels.get(id));
           if (occupants[id]) line(button, "span", "住戶｜" + occupants[id]);
-          line(button, "span", record ? "已填｜" + (record.reporter || "舊回報") : ready ? "未填" : "尚未載入");
+          line(button, "span", record ? (adminCode ? "已填｜" + (record.reporter || "舊回報") : "已填") : ready ? "未填" : "尚未載入");
           if (record) line(button, "span", report(record));
           if (record?.details) line(button, "span", record.details, "note");
           if (record?.repair) line(button, "span", "維修｜" + record.repair.status);
@@ -214,7 +226,7 @@
         legacy.hidden = !older.length;
         if (room) {
           const record = records.get(room);
-          const current = record ? "目前回報：" + (record.reporter || "舊回報") + "｜" + report(record) +
+          const current = record ? "目前回報：" + (adminCode ? (record.reporter || "舊回報") + "｜" : "") + report(record) +
             (record.details ? "｜" + record.details : "") + "\n再次送出會更新這間房的回報。" : "這間房尚未有人填報。";
           selected.textContent = (occupants[room] ? "住戶：" + occupants[room] + "\n" : "") + current;
           if (record?.repair) {
@@ -244,6 +256,7 @@
         formMessage.textContent = "";
         showDetails();
         draw();
+        if (adminCode) loadHistory(id);
         roomTitle.focus();
       }
       async function api(path, options, credential = code) {
@@ -253,6 +266,46 @@
         if (!response.ok) throw new Error(data.error);
         return data;
       }
+      async function loadHistory(id, append = false) {
+        const request = ++historyRequest;
+        const cursor = append ? historyCursor : "";
+        historyPanel.hidden = false;
+        if (!append) { historyList.replaceChildren(); historyCount = 0; }
+        historyMore.disabled = true;
+        historyStatus.textContent = "載入紀錄中…";
+        try {
+          const result = await api("/api/history?room=" + encodeURIComponent(id) +
+            (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""), undefined, adminCode);
+          if (request !== historyRequest || room !== id) return;
+          const dates = new Intl.DateTimeFormat("zh-TW", {
+            timeZone:"Asia/Taipei",year:"numeric",month:"2-digit",day:"2-digit",
+            hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false
+          });
+          for (const record of result.entries) {
+            const item = line(historyList, "li", "");
+            const timestamp = new Date(record.updated);
+            const time = Number.isNaN(timestamp.getTime()) ? "未保存時間" : dates.format(timestamp);
+            line(item, "h3", (record.roomLabel || labels.get(id)) + "｜" + time);
+            line(item, "p", "填報人：" + (record.reporter || "未填寫"));
+            line(item, "p", "冷氣：" + record.type + "｜損壞：" + roomStatus(record));
+            const details = line(item, "p", "損壞說明：" + (record.details || "無"));
+            details.style.whiteSpace = "pre-wrap";
+            if (record.legacy) line(item, "p", "更新前保留的回報", "hint");
+          }
+          historyCount += result.entries.length;
+          historyCursor = result.cursor;
+          historyMore.hidden = !historyCursor;
+          historyStatus.textContent = historyCount ? "已載入 " + historyCount + " 筆紀錄。" : "這間寢室尚無填報紀錄。";
+        } catch (error) {
+          if (request === historyRequest && room === id) {
+            historyStatus.textContent = error.message;
+            historyMore.hidden = true;
+          }
+        } finally {
+          if (request === historyRequest) historyMore.disabled = false;
+        }
+      }
+      historyMore.addEventListener("click", () => loadHistory(room, true));
       const unlock = document.querySelector("#unlock");
       const unlockForm = document.querySelector("#unlock-form");
       const noticeEditor = document.querySelector("#notice-editor");
@@ -333,6 +386,7 @@
         noticeEditor.hidden = false;
         unlock.hidden = true;
         document.querySelector("#admin-bar").hidden = false;
+        if (room) await loadHistory(room);
         await showActivity();
       }
       document.querySelector("#logout").addEventListener("click", () => {
@@ -400,6 +454,7 @@
               input.value = entry.label;
               input.required = true;
               input.maxLength = 24;
+              input.placeholder = "例如：101、東側一號";
               input.oninput = () => { entry.label = input.value; };
               label.append(input);
               const position = line(row, "label", "所在區域");
@@ -509,7 +564,7 @@
         refresh.disabled = true;
         submit.disabled = true;
         try {
-          const [rows, shared] = await Promise.all([api("/api/rooms"), api("/api/community")]);
+          const [rows, shared] = await Promise.all([api("/api/rooms", undefined, adminCode || code), api("/api/community")]);
           if (sequence !== refreshSequence || revision !== layoutRevision) return;
           const changed = setLayout(shared.configuration);
           occupants = shared.occupants;
@@ -521,6 +576,7 @@
           records = new Map(rows.map(record => [record.room, record]));
           ready = true;
           message.textContent = "";
+          if (adminCode && room) loadHistory(room);
         } catch (error) { message.textContent = error.message; }
         finally {
           submit.disabled = !ready;
@@ -540,6 +596,7 @@
         try {
           const saved = await api("/api/submit", {method:"POST", body});
           records.set(saved.room, saved);
+          if (adminCode && room === saved.room) loadHistory(saved.room);
           formMessage.textContent = labels.get(saved.room) + " 的回報已儲存。";
         } catch (error) { formMessage.textContent = error.message; }
         finally {
